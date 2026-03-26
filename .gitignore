@@ -1,0 +1,6 @@
+gitPush.sh
+env/
+venv/
+.env
+.venv
+/settings
