@@ -1,6 +1,4 @@
-
-
-  # Порт для Backend-сервера
-    PORT_BACKEND=5000
-    # Имя нашего проекта (для логов) "лысый-анатолий"
-    PROJECT_NAME="lysy-anatoliy"
+# settings
+PORT_BACKEND=5000
+PORT_CACHE=8080
+PROJECT_NAME="lysy-anatoliy"

