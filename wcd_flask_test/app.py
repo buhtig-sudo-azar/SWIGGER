@@ -15,6 +15,13 @@ class WCDMiddleware:
 
 app.wsgi_app = WCDMiddleware(app.wsgi_app)
 
+@app.after_request
+def add_backend_headers(response):
+    response.headers['X-Backend-Version'] = 'flask-1.0'
+    return response
+
+
+
 # Роут, отдающий приватные данные
 @app.route('/profile')
 @app.route('/profile/')
