@@ -22,12 +22,18 @@ def add_backend_headers(response):
 
 
 
+
 # Роут, отдающий приватные данные
 @app.route('/profile')
 @app.route('/profile/')
 @app.route('/profile/<path:anything>')
 def profile(anything=None):
     return "PRIVATE: admin api-key=WCD-SECRET-12345"
+
+
+@app.route('/test')
+def test(anything=None):
+    return "test"
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8081)
