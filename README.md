@@ -1,7 +1,7 @@
 # 🔫 Лысый Анатолий — WCD Gun v7.7
 
 [![Bash](https://img.shields.io/badge/Bash-5.0%2B-121011?logo=gnu-bash&style=flat-square)](https://www.gnu.org/software/bash/)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
+
 [![Burp Suite](https://img.shields.io/badge/Burp%20Suite-Integration-orange?style=flat-square)](https://portswigger.net/burp)
 
 > **Автоматизированный пулемёт для атак Web Cache Deception.**
