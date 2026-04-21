@@ -8,7 +8,7 @@
 > Превращает рутинный перебор разделителей в автоматический обстрел с логированием и интеграцией в Burp Suite.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ТВОЙ_НИК/ТВОЙ_РЕПО/main/wcd_anatoly_scheme.svg" alt="WCD Attack Scheme" width="100%">
+  <img src="https://raw.githubusercontent.com/buhtig-sudo-azar/SWIGGER/main/wcd_anatoly_scheme.svg" alt="WCD Attack Scheme" width="100%">
 </p>
 
 ## 🎯 Проблема, которую мы решаем
