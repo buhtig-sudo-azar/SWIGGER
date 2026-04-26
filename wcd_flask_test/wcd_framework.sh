@@ -179,17 +179,22 @@ cleanup() {
     exit 0
 }
 
+# Подготовка RAM-окружения (динамическое копирование ВСЕХ файлов)
 prepare_ram() {
     echo -e "${CYAN}[1/4] Подготовка RAM-окружения...${NC}"
     mkdir -p "$RAM_DIR" "$RAM_DIR/tools"
     
+    # Копируем основные файлы Flask и Nginx
     cp "$PROJECT_DIR/app.py" "$RAM_DIR/"
     cp "$PROJECT_DIR/nginx.conf" "$RAM_DIR/"
     cp "$PROJECT_DIR/nginx_vuln.conf" "$RAM_DIR/"
     
-    # Копируем ОТДЕЛЬНЫЙ пулемёт
-    cp "$PROJECT_DIR/tools/wcd_gun.sh" "$RAM_DIR/tools/"
-    chmod +x "$RAM_DIR/tools/wcd_gun.sh"
+    # Копируем ВСЮ директорию tools динамически (рекурсивно)
+    if [[ -d "$PROJECT_DIR/tools" ]]; then
+        cp -r "$PROJECT_DIR/tools/"* "$RAM_DIR/tools/" 2>/dev/null
+        # Убеждаемся что пулемёт исполняемый
+        [[ -f "$RAM_DIR/tools/wcd_gun.sh" ]] && chmod +x "$RAM_DIR/tools/wcd_gun.sh"
+    fi
     
     save_state
     
@@ -201,10 +206,64 @@ prepare_ram() {
 start_flask() {
     echo -e "${CYAN}[2/4] Запуск Flask (порт $FLASK_PORT)...${NC}"
     cd "$RAM_DIR"
+    
+    # Проверка наличия Flask ДО запуска
+    echo -n "   Проверка Flask..."
+    if ! python3 -c "import flask" 2>/dev/null; then
+        echo -e " ${RED}НЕ НАЙДЕН${NC}"
+        echo ""
+        echo -e "${RED}═══════════════════════════════════════════════════════════════${NC}"
+        echo -e "${RED}[!] ОШИБКА: Flask не установлен в текущем окружении!${NC}"
+        echo -e "${RED}═══════════════════════════════════════════════════════════════${NC}"
+        echo -e "${YELLOW}[*] Текущее окружение Python: $(which python3)${NC}"
+        echo -e "${YELLOW}[*] Установите Flask командой: pip install flask${NC}"
+        echo -e "${YELLOW}[*] Или активируйте окружение, где Flask установлен${NC}"
+        echo ""
+        log_event "ERROR" "Flask не установлен" "Выполните: pip install flask"
+        return 1
+    fi
+    echo -e " ${GREEN}OK${NC}"
+    
+    # Проверка синтаксиса app.py перед запуском
+    echo -n "   Проверка синтаксиса app.py..."
+    local syntax_check=$(python3 -m py_compile app.py 2>&1)
+    if [[ $? -ne 0 ]]; then
+        echo -e " ${RED}ОШИБКА${NC}"
+        echo ""
+        echo -e "${RED}═══════════════════════════════════════════════════════════════${NC}"
+        echo -e "${RED}[!] ОШИБКА: Синтаксическая ошибка в app.py!${NC}"
+        echo -e "${RED}═══════════════════════════════════════════════════════════════${NC}"
+        echo -e "${RED}$syntax_check${NC}"
+        echo ""
+        log_event "ERROR" "Синтаксическая ошибка в app.py" "$syntax_check"
+        return 1
+    fi
+    echo -e " ${GREEN}OK${NC}"
+    
+    # Проверка, что порт свободен
+    echo -n "   Проверка порта $FLASK_PORT..."
+    if lsof -i :$FLASK_PORT 2>/dev/null | grep -q LISTEN; then
+        echo -e " ${RED}ЗАНЯТ${NC}"
+        echo ""
+        echo -e "${RED}═══════════════════════════════════════════════════════════════${NC}"
+        echo -e "${RED}[!] ОШИБКА: Порт $FLASK_PORT уже занят!${NC}"
+        echo -e "${RED}═══════════════════════════════════════════════════════════════${NC}"
+        echo -e "${YELLOW}[*] Процесс на порту:${NC}"
+        lsof -i :$FLASK_PORT 2>/dev/null
+        echo -e "${YELLOW}[*] Освободите порт или измените FLASK_PORT в скрипте${NC}"
+        log_event "ERROR" "Порт $FLASK_PORT занят" "$(lsof -i :$FLASK_PORT 2>/dev/null)"
+        return 1
+    fi
+    echo -e " ${GREEN}СВОБОДЕН${NC}"
+    
+    # Запуск Flask
+    echo -n "   Запуск Flask..."
     setsid python3 app.py > "$RAM_DIR/flask.log" 2>&1 &
     FLASK_PID=$!
-    echo -n "   Ожидание Flask..."
-    for i in {1..20}; do
+    echo -e " PID=$FLASK_PID"
+    
+    echo -n "   Ожидание Flask"
+    for i in $(seq 1 20); do
         if nc -z localhost $FLASK_PORT 2>/dev/null; then
             echo -e " ${GREEN}готов (PID $FLASK_PID)${NC}"
             log_event "START" "Flask запущен" "PID: $FLASK_PID, Порт: $FLASK_PORT"
@@ -213,9 +272,29 @@ start_flask() {
         sleep 0.2
         echo -n "."
     done
-    echo -e "\n${RED}[!] Flask не запустился${NC}"
-    log_event "ERROR" "Flask не запустился" "Порт: $FLASK_PORT"
-    return 1
+    
+    # Если не запустился - показываем логи
+    echo -e "\n${RED}[!] Flask не запустился за отведённое время${NC}"
+    echo -e "${YELLOW}[*] PID процесса: $FLASK_PID${NC}"
+    
+    # Проверяем, жив ли процесс
+    if kill -0 $FLASK_PID 2>/dev/null; then
+        echo -e "${YELLOW}[*] Процесс жив, но порт не открыт. Возможно, Flask долго загружается${NC}"
+        echo -e "${YELLOW}[*] Лог Flask:${NC}"
+        cat "$RAM_DIR/flask.log" 2>/dev/null | tail -20
+        log_event "WARN" "Flask запущен но порт не отвечает" "PID: $FLASK_PID"
+        return 1
+    else
+        echo -e "${RED}[*] Процесс упал. Лог ошибки:${NC}"
+        if [[ -f "$RAM_DIR/flask.log" ]]; then
+            cat "$RAM_DIR/flask.log"
+        else
+            echo "Лог недоступен"
+        fi
+        log_event "ERROR" "Flask упал при запуске" "$(cat $RAM_DIR/flask.log 2>/dev/null)"
+        FLASK_PID=""
+        return 1
+    fi
 }
 
 # Запуск Nginx
@@ -250,7 +329,12 @@ restart_services() {
     
     [[ -d "$RAM_DIR" ]] && rm -rf "$RAM_DIR"
     prepare_ram
-    start_flask || { echo -e "${RED}[!] Не удалось запустить Flask${NC}"; return 1; }
+    start_flask || { 
+        echo -e "${RED}[!] Не удалось запустить Flask${NC}"
+        echo -e "${YELLOW}[*] Проверьте логи: $LOG_FILE${NC}"
+        log_event "ERROR" "Перезапуск прерван - Flask не запустился"
+        return 1
+    }
     start_nginx
     log_event "INFO" "Сервисы перезапущены с конфигом: ${NGINX_CONFIGS[$ACTIVE_CONFIG]}"
 }
@@ -297,7 +381,7 @@ show_status() {
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
 }
 
-# Запуск пулемёта
+# Запуск пулемёта (интерактивный режим, как было)
 run_gun() {
     local target="http://127.0.0.1:$NGINX_PORT/profile"
     echo -e "${CYAN}[*] Запускаю пулемёт с целью: $target${NC}"

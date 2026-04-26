@@ -20,19 +20,17 @@ def add_backend_headers(response):
     response.headers['X-Backend-Version'] = 'flask-1.0'
     return response
 
-
-
-
-# Роут, отдающий приватные данные
 @app.route('/profile')
 @app.route('/profile/')
-@app.route('/profile/<path:anything>')
-def profile(anything=None):
+def profile_index():
     return "PRIVATE: admin api-key=WCD-SECRET-12345"
 
+@app.route('/profile/<path:anything>')
+def profile_with_path(anything):
+    return "PRIVATE: admin api-key=WCD-SECRET-12345"
 
 @app.route('/test')
-def test(anything=None):
+def test():
     return "test"
 
 if __name__ == '__main__':
