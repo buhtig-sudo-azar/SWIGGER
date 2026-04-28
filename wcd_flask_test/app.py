@@ -22,6 +22,7 @@ def add_backend_headers(response):
 
 @app.route('/profile')
 @app.route('/profile/')
+@app.route('/profile/user.json')
 def profile_index():
     return "PRIVATE: admin api-key=WCD-SECRET-12345"
 

