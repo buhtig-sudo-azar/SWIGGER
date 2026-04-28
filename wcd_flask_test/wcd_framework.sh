@@ -398,6 +398,20 @@ run_gun() {
 }
 
 # Меню лаунчера
+show_all_processes() {
+    echo -e "${CYAN}═══════════════ АКТИВНЫЕ ПРОЦЕССЫ СТЕНДА ═══════════════${NC}"
+    local procs=$(ps aux | grep -E "wcd_gun|wcd_framework|nginx.*sandbox|python3.*app\.py" | grep -v grep)
+    if [[ -z "$procs" ]]; then
+        echo -e "  ${YELLOW}[*] Связанных процессов не найдено.${NC}"
+    else
+        echo "$procs" | while IFS= read -r line; do
+            echo -e "  ${DIM}${line}${NC}"
+        done
+    fi
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+}
+
 show_launcher_menu() {
     clear
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
@@ -417,6 +431,7 @@ show_launcher_menu() {
     echo "  restart       — полный перезапуск с очисткой кэша и выбором режима"
     echo "  switch        — сменить режим на лету (hot reload)"
     echo "  status        — статус стенда"
+    echo "  ps            — показать все процессы стенда"
     echo "  help          — это меню"
     echo "  exit          — выход и ПОЛНАЯ очистка"
     echo ""
@@ -435,6 +450,7 @@ launcher_main() {
     prepare_ram
     start_flask || exit 1
     start_nginx || exit 1
+    show_all_processes
     log_event "INFO" "Лаунчер готов к работе с конфигом: ${NGINX_CONFIGS[$ACTIVE_CONFIG]}"
     
     echo -e "${GREEN}[+] Стенд успешно запущен!${NC}"
@@ -453,7 +469,7 @@ launcher_main() {
                 [[ -z "$arg" ]] && echo -e "${RED}Укажи URL${NC}" || {
                     log_event "ACTION" "Тестовый запрос" "$arg"
                     echo -e "${GREEN}Запрос к $arg :${NC}"
-                    curl -s -I "$arg" | head -10
+                    curl -s -v "$arg" 2>&1 | head -30
                 }
                 ;;
             log)    tail -20 "$LOG_FILE" ;;
@@ -461,6 +477,7 @@ launcher_main() {
             restart) restart_services ;;
             switch)  switch_config ;;
             status)  show_status ;;
+            ps)      show_all_processes ;;
             help)    show_launcher_menu ;;
             exit|quit) exit 0 ;;
             *) [[ -n "$cmd" ]] && echo -e "${RED}Неизвестная команда: $cmd${NC}" ;;

