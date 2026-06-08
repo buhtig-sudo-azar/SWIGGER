@@ -3,4 +3,7 @@ env/
 venv/
 .env
 .venv
-/settings
+/settings-e 
+# AI platform artifacts
+Caddyfile
+worklog.md
